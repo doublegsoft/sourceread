@@ -15,16 +15,8 @@
 
 #include "sourceread.h"
 
-/**
- * Print the exact source code slice corresponding to any TSNode
- */
-static void sr_print_node_source(TSNode node, const char* source_code) {
-  uint32_t start_byte = ts_node_start_byte(node);
-  uint32_t end_byte = ts_node_end_byte(node);
-  uint32_t length = end_byte - start_byte;
-
-  printf("%.*s\n", (int)length, source_code + start_byte);
-}
+#define INDENT_SIZE 2
+#define INITIAL_BUFFER_CAPACITY 256
 
 static void
 sr_parse_file(TSParser* parser, const char* nodetype, const char* filepath, void* userdata)
@@ -37,7 +29,7 @@ sr_parse_file(TSParser* parser, const char* nodetype, const char* filepath, void
     strlen(source_code)
   );
   TSNode root_node = ts_tree_root_node(tree);
-  sr_print_ast(root_node, nodetype, source_code, 0);
+  sr_print_source(root_node, nodetype, source_code, 2);
   free(source_code);
   ts_tree_delete(tree);
 }
@@ -97,7 +89,8 @@ int main(int argc, char *argv[])
   } 
   else if (proj)
   {
-    sr_walk_dir(proj, ext, parser, type, sr_parse_file, NULL);
+    // sr_walk_dir(proj, ext, parser, type, sr_parse_file, NULL);
+    sr_build_index(parser, "fun.sri", "fun.srd", proj, ".c,.h", type);
   }
 
   ts_parser_delete(parser);

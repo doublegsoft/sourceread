@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
       strlen(source_code)
     );
     TSNode root_node = ts_tree_root_node(tree);
-    sr_print_ast(root_node, type, source_code, 0);
+    sr_print_source(root_node, type, source_code, 0);
     ts_tree_delete(tree);
   } 
   else if (proj)

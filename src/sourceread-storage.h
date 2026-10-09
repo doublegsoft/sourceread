@@ -19,20 +19,30 @@
 ** See the License for the specific language governing permissions and
 ** limitations under the License.                                                   
 */
-#ifndef __SOURCEREAD_H__
-#define __SOURCEREAD_H__
+#ifndef __SOURCEREAD_STORAGE_H__
+#define __SOURCEREAD_STORAGE_H__
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "sourceread-file.h"
-#include "sourceread-graph.h"
-#include "sourceread-storage.h"
-#include "sourceread-treesitter.h"
+#include <tree_sitter/api.h>
+
+int
+sr_build_index(TSParser* parser,
+               const char* index_path, 
+               const char* data_path, 
+               const char* proj_path,
+               const char* file_exts,
+               const char* node_type);
+
+int
+sr_search_source(const char* index_path, 
+                 const char* pattern,
+                 char** source);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // __SOURCEREAD_H__
+#endif // __SOURCEREAD_STORAGE_H__

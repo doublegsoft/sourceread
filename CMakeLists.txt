@@ -77,9 +77,11 @@ set(TREE_SITTER_C_INCLUDE_DIR      "${TREE_SITTER_C_ROOT}/src")
 set(TREE_SITTER_C_LIBRARY_DIR      "${TREE_SITTER_C_ROOT}/${BUILD}")
 set(TREE_SITTER_C_LIBRARIES        "${TREE_SITTER_C_LIBRARY_DIR}/libtree-sitter-c.a")
 
-set(SOURCEREAD_SRC
-  "src/main.c"
-)
+################################################################################
+##                                                                            ##
+##                                 sourceread                                 ##
+##                                                                            ##
+################################################################################
 
 include_directories(
   "src"
@@ -96,8 +98,17 @@ link_directories(
 )
 
 add_library(sourceread STATIC
-  src/sourceread.c
+  src/sourceread-file.c
+  src/sourceread-graph.c
+  src/sourceread-storage.c
+  src/sourceread-treesitter.c
 )
+
+################################################################################
+##                                                                            ##
+##                                    tool                                    ##
+##                                                                            ##
+################################################################################
 
 add_executable(sourceread4java tool/sourceread4java.c)
 
@@ -125,4 +136,13 @@ target_link_libraries(sourceread4c PRIVATE
   ${TREE_SITTER_LIBRARIES}
   ${TREE_SITTER_C_LIBRARIES}
 )
+
+# add_executable(sourceread-storage src/sourceread-storage.c)
+
+# target_link_libraries(sourceread-storage PRIVATE
+#   sourceread
+#   ${ARGPARSE_LIBRARIES}
+#   ${TREE_SITTER_LIBRARIES}
+#   ${TREE_SITTER_C_LIBRARIES}
+# )
 
