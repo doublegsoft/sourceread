@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 
+#include "sourceread-error.h"
 #include "sourceread-storage.h"
 #include "sourceread-file.h"
 #include "sourceread-treesitter.h"
@@ -530,98 +531,6 @@ sr_intersect_posts(
   return res;
 }
 
-void
-sr_search(const char* index_file, const char* pattern)
-{
-  FILE* fp = fopen(index_file, "rb");
-  if (!fp) return;
-
-  sr_srix_hdr_t hdr;
-  if (fread(&hdr, sizeof(hdr), 1, fp) != 1 || hdr.magic != SRIX_MAGIC)
-  {
-    fclose(fp);
-    return;
-  }
-
-  printf("\n=== Substring Query: LIKE '%%%s%%' ===\n", pattern);
-
-  size_t plen = strlen(pattern);
-  if (plen < 3)
-  {
-    printf("Pattern too short! Trigram requires >= 3 characters.\n");
-    fclose(fp);
-    return;
-  }
-
-  uint32_t* candidate_docs = NULL;
-  uint32_t candidate_count = 0;
-
-  for (size_t i = 0; i <= plen - 3; i++)
-  {
-    char gram[3];
-    gram[0] = (char)tolower((unsigned char)pattern[i]);
-    gram[1] = (char)tolower((unsigned char)pattern[i + 1]);
-    gram[2] = (char)tolower((unsigned char)pattern[i + 2]);
-
-    uint32_t* current_list = NULL;
-    uint32_t current_count = 0;
-
-    if (!sr_find_posts_for_gram(fp, &hdr, gram, &current_list, &current_count))
-    {
-      free(candidate_docs);
-      printf("-> Trigram '%.3s' not found. 0 matches.\n", gram);
-      fclose(fp);
-      return;
-    }
-
-    if (i == 0)
-    {
-      candidate_docs = current_list;
-      candidate_count = current_count;
-    }
-    else
-    {
-      uint32_t next_len = 0;
-      uint32_t* next_docs = sr_intersect_posts(
-        candidate_docs, candidate_count, current_list, current_count, &next_len
-      );
-      free(candidate_docs);
-      free(current_list);
-      candidate_docs = next_docs;
-      candidate_count = next_len;
-    }
-
-    if (candidate_count == 0) break;
-  }
-
-  printf("Found %u candidate matches:\n", candidate_count);
-  for (uint32_t i = 0; i < candidate_count; i++)
-  {
-    uint32_t doc_id = candidate_docs[i];
-
-    fseek(fp, (long)(hdr.docs_offset + doc_id * sizeof(uint64_t)), SEEK_SET);
-    uint64_t doc_rec_offset = 0;
-    fread(&doc_rec_offset, sizeof(uint64_t), 1, fp);
-
-    fseek(fp, (long)doc_rec_offset, SEEK_SET);
-    sr_doc_rec_hdr_t dhdr;
-    fread(&dhdr, sizeof(dhdr), 1, fp);
-
-    char name_buf[256];
-    fread(name_buf, sizeof(char), dhdr.name_len, fp);
-    name_buf[dhdr.name_len] = '\0';
-
-    if (strstr(name_buf, pattern) != NULL)
-    {
-      printf("-> MATCH [Doc %u] %-20s (Source byte: %llu ~ %llu)\n",
-             doc_id, name_buf, dhdr.start_byte, dhdr.end_byte);
-    }
-  }
-
-  free(candidate_docs);
-  fclose(fp);
-}
-
 /*!
 ** 从 Tree-sitter C 语言的函数定义节点中精准提取纯函数名称。
 **
@@ -640,7 +549,7 @@ sr_search(const char* index_file, const char* pattern)
 ** @return             返回新分配的函数名称字符串（调用方需 free()）；
 **                     若非函数节点或提取失败则返回 NULL。
 */
-char*
+static char*
 sr_fun_name(TSNode node, const char* source_code)
 {
   if (ts_node_is_null(node) || !source_code) return NULL;
@@ -741,9 +650,12 @@ sr_visit_node(sr_indexer_ctx_t* ctx,
     if (!raw) return;
 
     uint64_t data_start = (uint64_t)ftell(ctx->data_fp);
-    size_t raw_len = strlen(raw);
+    
+    char* fmt_src = sr_format_code(raw, 2);
+    free(raw);
 
-    fwrite(raw, sizeof(char), raw_len, ctx->data_fp);
+    size_t fmt_len = strlen(fmt_src);
+    fwrite(fmt_src, sizeof(char), fmt_len, ctx->data_fp);
     fputc('\n', ctx->data_fp); /* 添加换行符作为分隔 */
     uint64_t data_end = (uint64_t)ftell(ctx->data_fp);
     char* fn = sr_fun_name(node, source_code);
@@ -752,7 +664,7 @@ sr_visit_node(sr_indexer_ctx_t* ctx,
       sr_builder_add_doc(ctx->builder, fn, data_start, data_end);
       free(fn);
     }
-    free(raw);
+    free(fmt_src);
   }
   else 
   {
@@ -814,30 +726,185 @@ sr_build_index(TSParser* parser,
   return 0;
 }
 
-/* ========================================================================== */
-/*                                 main entry                                 */
-/* ========================================================================== */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <ctype.h>
 
-// int
-// main(void)
-// {
-//   const char* idx_path = "symbols.srix";
+/*!
+** 检索并打印所有匹配 pattern 的函数名及其源码片段。
+**
+** 算法与改造点：
+** 1. 采用 Trigram 求交过滤出候选 Doc 集合；
+** 2. 打开 .dat 数据文件并保持句柄打开状态，遍历全部 candidate_docs；
+** 3. 移除单次命中的 break 逻辑，支持打印出全部满足模糊/子串匹配的函数；
+** 4. 统计总命中数 (match_count)；
+** 5. 若有命中，将首个/聚合匹配的源码通过 *source 传出供调用者使用。
+**
+** @param index_path .srix 二进制索引文件路径
+** @param data_path  .dat 源码数据文件路径
+** @param pattern    待检索的函数名关键字 (>= 3字符)
+** @param source     [输出参数] 传出查找到的源码内容 (调用方需负责 free)
+**
+** @return int 错误码 (SR_SUCCESS 为成功，无匹配返回 SR_ERR_SEARCH_MATCH_NOT_FOUND)
+*/
+int
+sr_search_source(const char* index_path, 
+                 const char* data_path, 
+                 const char* pattern,
+                 char** source)
+{
+  if (!index_path || !data_path || !pattern || !source) {
+    return SR_ERR_COMM_PARAM_NULL;
+  }
+  *source = NULL;
 
-//   /* 1. 构建索引并存盘 */
-//   sr_builder_t* builder = sr_builder_new();
-//   sr_builder_add_doc(builder, "print_source",   100, 250);
-//   sr_builder_add_doc(builder, "parse_source",   300, 420);
-//   sr_builder_add_doc(builder, "sprint_buffer",  450, 600);
-//   sr_builder_add_doc(builder, "abort_work",     650, 780);
+  size_t plen = strlen(pattern);
+  if (plen < 3) {
+    /* Trigram 引擎至少需要 3 个字符建立滑动窗口 */
+    return SR_ERR_SEARCH_QUERY_TOO_SHORT;
+  }
 
-//   sr_save_file(builder, idx_path);
-//   sr_builder_free(builder);
+  /* 1. 打开索引文件并校验 Header 魔数 */
+  FILE* idx_fp = fopen(index_path, "rb");
+  if (!idx_fp) {
+    return SR_ERR_FILE_HANDLER_OPEN;
+  }
 
-//   /* 2. 测试查询 */
-//   sr_search(idx_path, "source");  /* 匹配 print_source, parse_source */
-//   sr_search(idx_path, "print");   /* 匹配 print_source, sprint_buffer */
-//   sr_search(idx_path, "work");    /* 匹配 abort_work */
-//   sr_search(idx_path, "xyz");     /* 无匹配 */
+  sr_srix_hdr_t hdr;
+  if (fread(&hdr, sizeof(hdr), 1, idx_fp) != 1 || hdr.magic != SRIX_MAGIC) {
+    fclose(idx_fp);
+    return SR_ERR_INDEX_HDR_MAGIC_MISMATCH;
+  }
 
-//   return 0;
-// }
+  /* 2. Trigram 检索及多倒排链求交集 (AND 操作) */
+  uint32_t* candidate_docs = NULL;
+  uint32_t candidate_count = 0;
+
+  for (size_t i = 0; i <= plen - 3; i++) {
+    char gram[3];
+    gram[0] = (char)tolower((unsigned char)pattern[i]);
+    gram[1] = (char)tolower((unsigned char)pattern[i + 1]);
+    gram[2] = (char)tolower((unsigned char)pattern[i + 2]);
+
+    uint32_t* current_list = NULL;
+    uint32_t current_count = 0;
+
+    /* 在 Section 2 (Dictionary) 进行二分查找 */
+    if (!sr_find_posts_for_gram(idx_fp, &hdr, gram, &current_list, &current_count)) {
+      free(candidate_docs);
+      fclose(idx_fp);
+      return SR_ERR_SEARCH_MATCH_NOT_FOUND; /* 某个三元组不存在，说明无匹配项 */
+    }
+
+    if (i == 0) {
+      candidate_docs = current_list;
+      candidate_count = current_count;
+    } else {
+      uint32_t next_len = 0;
+      uint32_t* next_docs = sr_intersect_posts(
+        candidate_docs, candidate_count, current_list, current_count, &next_len
+      );
+      free(candidate_docs);
+      free(current_list);
+      candidate_docs = next_docs;
+      candidate_count = next_len;
+    }
+
+    if (candidate_count == 0) {
+      free(candidate_docs);
+      fclose(idx_fp);
+      return SR_ERR_SEARCH_MATCH_NOT_FOUND;
+    }
+  }
+
+  /* 3. 准备打开数据文件，开始遍历所有候选文档 */
+  FILE* data_fp = fopen(data_path, "rb");
+  if (!data_fp) {
+    free(candidate_docs);
+    fclose(idx_fp);
+    return SR_ERR_FILE_HANDLER_OPEN;
+  }
+
+  uint32_t match_count = 0;
+  char* first_matched_code = NULL;
+
+  printf("\n=======================================================\n");
+  printf("  Search Results for Pattern: '%s' (Candidates: %u)\n", pattern, candidate_count);
+  printf("=======================================================\n");
+
+  for (uint32_t i = 0; i < candidate_count; i++) {
+    uint32_t doc_id = candidate_docs[i];
+
+    /* 定位到 Section 4 的跳跃表获取文档条目的绝对偏移量 */
+    if (fseek(idx_fp, (long)(hdr.docs_offset + doc_id * sizeof(uint64_t)), SEEK_SET) != 0) {
+      continue;
+    }
+    uint64_t doc_rec_offset = 0;
+    if (fread(&doc_rec_offset, sizeof(uint64_t), 1, idx_fp) != 1) continue;
+
+    /* 读取文档头 (包含名称长度与源码在 .dat 中的起止字节) */
+    if (fseek(idx_fp, (long)doc_rec_offset, SEEK_SET) != 0) continue;
+    sr_doc_rec_hdr_t dhdr;
+    if (fread(&dhdr, sizeof(dhdr), 1, idx_fp) != 1) continue;
+
+    /* 读取函数名称 */
+    char name_buf[256];
+    if (dhdr.name_len >= sizeof(name_buf)) continue;
+    if (fread(name_buf, sizeof(char), dhdr.name_len, idx_fp) != dhdr.name_len) continue;
+    name_buf[dhdr.name_len] = '\0';
+
+    /* 二次校验：函数名是否包含目标 pattern (子串匹配) */
+    if (strstr(name_buf, pattern) != NULL) {
+      if (dhdr.end_byte < dhdr.start_byte) continue;
+
+      size_t snippet_len = (size_t)(dhdr.end_byte - dhdr.start_byte);
+      char* code_buf = (char*)malloc(snippet_len + 1);
+      if (!code_buf) continue;
+
+      /* 定位到 .dat 数据文件中的物理偏移并读取源代码片段 */
+      if (fseek(data_fp, (long)dhdr.start_byte, SEEK_SET) == 0) {
+        size_t read_bytes = fread(code_buf, 1, snippet_len, data_fp);
+        code_buf[read_bytes] = '\0';
+
+        match_count++;
+
+        /* 格式化打印当前命中的函数信息 */
+        printf("\n[%u] MATCHED FUNCTION: %s (Doc ID: %u)\n", match_count, name_buf, doc_id);
+        printf("    Offset Range: [%llu ~ %llu] (%zu bytes)\n", 
+               (unsigned long long)dhdr.start_byte, 
+               (unsigned long long)dhdr.end_byte, 
+               snippet_len);
+        printf("---------------------- SOURCE CODE --------------------\n");
+        printf("%s\n", code_buf);
+        printf("-------------------------------------------------------\n");
+
+        /* 保留首个命中的源码片段输出给 *source (若调用方需要) */
+        if (!first_matched_code) {
+          first_matched_code = code_buf;
+        } else {
+          free(code_buf); /* 避免内存泄漏 */
+        }
+      } else {
+        free(code_buf);
+      }
+    }
+  }
+
+  /* 4. 清理资源 */
+  free(candidate_docs);
+  fclose(idx_fp);
+  fclose(data_fp);
+
+  if (match_count == 0) {
+    printf("No matching functions found for pattern: '%s'\n", pattern);
+    return SR_ERR_SEARCH_MATCH_NOT_FOUND;
+  }
+
+  printf("\nTotal Matched Functions: %u\n", match_count);
+  *source = first_matched_code;
+
+  return SR_SUCCESS;
+}

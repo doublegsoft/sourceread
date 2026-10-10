@@ -137,12 +137,12 @@ target_link_libraries(sourceread4c PRIVATE
   ${TREE_SITTER_C_LIBRARIES}
 )
 
-# add_executable(sourceread-storage src/sourceread-storage.c)
+add_executable(sourceread-fun tool/sourceread-fun.c)
 
-# target_link_libraries(sourceread-storage PRIVATE
-#   sourceread
-#   ${ARGPARSE_LIBRARIES}
-#   ${TREE_SITTER_LIBRARIES}
-#   ${TREE_SITTER_C_LIBRARIES}
-# )
+target_link_libraries(sourceread-fun PRIVATE
+  sourceread
+  ${ARGPARSE_LIBRARIES}
+  ${TREE_SITTER_LIBRARIES}
+  ${TREE_SITTER_C_LIBRARIES}
+)
 

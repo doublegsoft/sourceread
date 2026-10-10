@@ -26,6 +26,7 @@
 extern "C" {
 #endif
 
+#include "sourceread-error.h"
 #include "sourceread-file.h"
 #include "sourceread-graph.h"
 #include "sourceread-storage.h"

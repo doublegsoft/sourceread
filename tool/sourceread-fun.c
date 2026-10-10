@@ -19,82 +19,44 @@
 ** See the License for the specific language governing permissions and
 ** limitations under the License.                                                   
 */
-#include <stdio.h>
-#include <dirent.h>
-#include <errno.h>
-#include <string.h>
-
 #include <argparse.h>
-#include <tree_sitter/api.h>
 
 #include "sourceread.h"
 
-const TSLanguage* tree_sitter_sql(void);
-
 static const char* const usages[] = 
 {
-  "sourceread4sql [options]",
+  "sourceread-fun [options]",
   NULL,
 };
 
-
 int main(int argc, char *argv[]) 
 {
-  char* file = NULL;
-  char* proj = NULL;
-  char* type = NULL;
+  char* index_path = NULL;
+  char* data_path = NULL;
+  char* pattern = NULL;
 
   struct argparse_option options[] = {
     OPT_HELP(),
-    OPT_STRING('f', "file", &file, "input file path", NULL, 0, 0),
-    OPT_STRING('p', "project", &proj, "input project path", NULL, 0, 0),
-    OPT_STRING('t', "type", &type, "grammar node type", NULL, 0, 0),
+    OPT_STRING('i', "index_path", &index_path, "index file path", NULL, 0, 0),
+    OPT_STRING('d', "data_path", &data_path, "data file path", NULL, 0, 0),
+    OPT_STRING('p', "pattern", &pattern, "search pattern", NULL, 0, 0),
     OPT_END(),
   };
 
   struct argparse argparse;
   argparse_init(&argparse, options, usages, 0);
-  argparse_describe(&argparse, "\nParse sql file or projects to AST.", NULL);
+  argparse_describe(&argparse, "\nPrint function source matching pattern.", NULL);
   
   argc = argparse_parse(&argparse, argc, (const char**) argv);
-  if (file == NULL && proj == NULL) 
-  {
-    argparse_usage(&argparse);
-    return 1;
-  }
-  if (proj != NULL && type == NULL)
+  if (index_path != NULL && data_path == NULL || pattern == NULL)
   {
     argparse_usage(&argparse);
     return 1;
   }
 
-  TSParser* parser = ts_parser_new();
-
-  if (!ts_parser_set_language(parser, tree_sitter_sql())) {
-    fprintf(stderr, "Error loading sql grammar.\n");
-    ts_parser_delete(parser);
-    return 1;
-  }
-
-  if (file)
-  {
-    const char* source_code = sr_read_file(file);
-    TSTree* tree = ts_parser_parse_string(
-      parser,
-      NULL,
-      source_code,
-      strlen(source_code)
-    );
-    TSNode root_node = ts_tree_root_node(tree);
-    sr_print_source(root_node, type, source_code, 0);
-    ts_tree_delete(tree);
-  } 
-  else if (proj)
-  {
-    sr_walk_dir(proj, ".sql", parser, type, NULL, NULL);
-  }
-
-  ts_parser_delete(parser);
-
+  char* source = NULL;
+  sr_search_source(index_path, data_path, pattern, &source); 
+  printf("%s\n", source);
+  free(source);
   return 0;
 }
