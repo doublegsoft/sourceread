@@ -19,8 +19,8 @@
 ** See the License for the specific language governing permissions and
 ** limitations under the License.                                                   
 */
-#ifndef SOURCEREAD_ERROR_H
-#define SOURCEREAD_ERROR_H
+#ifndef __SOURCEREAD_ERROR_H__
+#define __SOURCEREAD_ERROR_H__
 
 #ifdef __cplusplus
 extern "C" {
@@ -173,4 +173,4 @@ sr_error_str(sr_errno_t err)
 }
 #endif
 
-#endif /* SOURCEREAD_ERROR_H */
+#endif /* __SOURCEREAD_ERROR_H__ */

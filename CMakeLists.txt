@@ -146,3 +146,30 @@ target_link_libraries(sourceread-fun PRIVATE
   ${TREE_SITTER_C_LIBRARIES}
 )
 
+add_executable(sourceread-standalone tool/sourceread-standalone.c)
+
+target_link_libraries(sourceread-standalone PRIVATE
+  sourceread
+  ${ARGPARSE_LIBRARIES}
+  ${TREE_SITTER_LIBRARIES}
+  ${TREE_SITTER_C_LIBRARIES}
+)
+
+add_executable(print-methods tool/java/print-methods.c)
+
+target_link_libraries(print-methods PRIVATE
+  sourceread
+  ${ARGPARSE_LIBRARIES}
+  ${TREE_SITTER_LIBRARIES}
+  ${TREE_SITTER_JAVA_LIBRARIES}
+)
+
+add_executable(print-stacks tool/java/print-stacks.c)
+
+target_link_libraries(print-stacks PRIVATE
+  sourceread
+  ${ARGPARSE_LIBRARIES}
+  ${TREE_SITTER_LIBRARIES}
+  ${TREE_SITTER_JAVA_LIBRARIES}
+)
+

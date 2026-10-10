@@ -23,7 +23,9 @@
 #include <sys/stat.h>
 
 #include "sourceread-file.h"
+#include "sourceread-storage.h"
 #include "sourceread-treesitter.h"
+#include "sourceread-util.h"
 
 /* ========================================================================== */
 /*                                sr_print_source                             */
